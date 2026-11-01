@@ -1,0 +1,244 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>神社・寺院マップ</title>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet"
+          href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 20px;
+        }
+
+        #map {
+            width: 100%;
+            height: 600px;
+        }
+
+        h1 {
+            margin-bottom: 10px;
+        }
+
+        button {
+            margin-bottom: 10px;
+            padding: 8px 16px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>神社・寺院マップ</h1>
+
+    <p>マーカーをクリックすると神社の情報を表示します。</p>
+
+    <!-- 現在地追跡ボタン -->
+    <button onclick="startTracking()">追跡開始</button>
+    <button onclick="stopTracking()">追跡停止</button>
+
+    <!-- 地図表示領域（1つだけにする） -->
+    <div id="map"></div>
+
+    <!-- Leaflet JavaScript -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+
+        // =====================================
+        // ① 地図の初期化
+        // =====================================
+
+        const map = L.map('map').setView(
+            [41.7688, 140.7290],
+            13
+        );
+
+        // OpenStreetMapの地図を表示
+        L.tileLayer(
+            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+            {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap contributors'
+            }
+        ).addTo(map);
+
+
+        // =====================================
+        // ② 神社データ
+        // =====================================
+
+        const shrines = [
+
+            {
+                name: "函館八幡宮",
+                latitude: 41.7515,
+                longitude: 140.7140,
+                address: "北海道函館市谷地頭町",
+                description: "函館市内の神社"
+            },
+
+            {
+                name: "湯倉神社",
+                latitude: 41.7805,
+                longitude: 140.7830,
+                address: "北海道函館市湯川町",
+                description: "湯の川地区の神社"
+            }
+
+        ];
+
+
+        // =====================================
+        // ③ 神社のマーカーを表示
+        // =====================================
+
+        shrines.forEach(function(shrine) {
+
+            const marker = L.marker([
+                shrine.latitude,
+                shrine.longitude
+            ]).addTo(map);
+
+            marker.bindPopup(
+                "<h3>" + shrine.name + "</h3>" +
+                "<p>所在地：" + shrine.address + "</p>" +
+                "<p>" + shrine.description + "</p>"
+            );
+
+        });
+
+
+        // =====================================
+        // ④ 現在地追跡機能
+        // =====================================
+
+        // 現在地マーカー
+        let currentMarker = null;
+
+        // 追跡ID
+        let watchId = null;
+
+
+        // 追跡開始
+        function startTracking() {
+
+            if (!navigator.geolocation) {
+                alert("このブラウザでは位置情報を利用できません。");
+                return;
+            }
+
+            // 二重起動防止
+            if (watchId !== null) {
+                alert("すでに追跡中です。");
+                return;
+            }
+
+            watchId = navigator.geolocation.watchPosition(
+
+                function(position) {
+
+                    // 緯度と経度を取得
+                    const latitude = position.coords.latitude;
+                    const longitude = position.coords.longitude;
+
+                    const currentPosition = [
+                        latitude,
+                        longitude
+                    ];
+
+                    // 地図を現在地に移動
+                    map.setView(currentPosition, 16);
+
+                    // マーカーを作成または更新
+                    if (currentMarker === null) {
+
+                        currentMarker = L.marker(currentPosition)
+                            .addTo(map)
+                            .bindPopup("現在地");
+
+                        currentMarker.openPopup();
+
+                    } else {
+
+                        currentMarker.setLatLng(currentPosition);
+
+                    }
+
+                    console.log("緯度：" + latitude);
+                    console.log("経度：" + longitude);
+
+                },
+
+                function(error) {
+
+                    switch(error.code) {
+
+                        case 1:
+                            alert("位置情報の利用が許可されていません。");
+                            break;
+
+                        case 2:
+                            alert("現在地を取得できませんでした。");
+                            break;
+
+                        case 3:
+                            alert("位置情報の取得がタイムアウトしました。");
+                            break;
+
+                        default:
+                            alert("位置情報の取得中にエラーが発生しました。");
+                    }
+
+                    // 取得エラー時は追跡状態を解除
+                    if (watchId !== null) {
+                        navigator.geolocation.clearWatch(watchId);
+                        watchId = null;
+                    }
+
+                },
+
+                {
+                    enableHighAccuracy: true,
+                    maximumAge: 3000,
+                    timeout: 10000
+                }
+
+            );
+
+        }
+
+
+        // =====================================
+        // ⑤ 追跡停止機能
+        // =====================================
+
+        function stopTracking() {
+
+            if (watchId !== null) {
+
+                navigator.geolocation.clearWatch(watchId);
+
+                watchId = null;
+
+                alert("現在地の追跡を停止しました。");
+
+            } else {
+
+                alert("現在地は追跡されていません。");
+
+            }
+
+        }
+
+    </script>
+
+</body>
+</html>
