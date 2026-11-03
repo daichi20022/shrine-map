@@ -1,244 +1,560 @@
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
     <title>神社・寺院マップ</title>
 
     <!-- Leaflet CSS -->
-    <link rel="stylesheet"
-          href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <!-- Leaflet Routing Machine CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css">
 
     <style>
         body {
             font-family: sans-serif;
             margin: 20px;
+            line-height: 1.6;
         }
-
+        h1 { margin-bottom: 10px; }
+        h2 { margin-top: 24px; }
         #map {
             width: 100%;
             height: 600px;
+            margin-top: 15px;
         }
-
-        h1 {
-            margin-bottom: 10px;
-        }
-
         button {
-            margin-bottom: 10px;
+            margin: 5px;
             padding: 8px 16px;
             cursor: pointer;
         }
+        select, input, textarea {
+            box-sizing: border-box;
+            max-width: 100%;
+            padding: 8px;
+            margin: 5px;
+        }
+        input[type="text"], input[type="number"], textarea {
+            width: min(100%, 500px);
+        }
+        #routeInfo, #loadStatus, #registeredCount {
+            margin: 10px 5px;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+        }
+        .form-row { margin-bottom: 8px; }
+        hr { margin-top: 25px; margin-bottom: 25px; }
+        .note { color: #555; font-size: 0.9em; }
     </style>
 </head>
-
 <body>
-
     <h1>神社・寺院マップ</h1>
+    <p>マーカーをクリックすると、神社・寺院の情報を表示します。</p>
 
-    <p>マーカーをクリックすると神社の情報を表示します。</p>
-
-    <!-- 現在地追跡ボタン -->
+    <!-- 現在地追跡 -->
+    <h2>現在地の追跡</h2>
     <button onclick="startTracking()">追跡開始</button>
     <button onclick="stopTracking()">追跡停止</button>
 
-    <!-- 地図表示領域（1つだけにする） -->
-    <div id="map"></div>
+    <hr>
 
-    <!-- Leaflet JavaScript -->
+    <!-- 経路検索 -->
+    <h2>経路検索</h2>
+    <div>
+        <label for="destinationSelect">目的地：</label>
+        <select id="destinationSelect">
+            <option value="">目的地を選択してください</option>
+        </select>
+        <button onclick="searchRoute()">経路を検索</button>
+        <button onclick="clearRoute()">経路を消去</button>
+    </div>
+    <p id="routeInfo">現在地から目的地までの経路を検索できます。</p>
+
+    <hr>
+
+    <!-- 地図 -->
+    <div id="map"></div>
+    <p class="note">地図データ：&copy; OpenStreetMap contributors</p>
+
+    <!-- 地図表示範囲から自動取得 -->
+    <h2>神社・寺院の自動取得</h2>
+    <p>現在表示している地図の範囲から、OpenStreetMapのデータを検索します。</p>
+    <button onclick="loadNearbyShrines()">表示範囲の神社・寺院を取得</button>
+    <p id="loadStatus">取得待機中</p>
+
+    <hr>
+
+    <!-- 手動登録 -->
+    <h2>神社・寺院の手動追加</h2>
+    <div class="form-row">
+        <label for="manualName">名称：</label><br>
+        <input type="text" id="manualName" placeholder="例：函館八幡宮">
+    </div>
+    <div class="form-row">
+        <label for="manualType">種類：</label><br>
+        <select id="manualType">
+            <option value="神社">神社</option>
+            <option value="寺院">寺院</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <label for="manualLat">緯度：</label><br>
+        <input type="number" id="manualLat" step="any" placeholder="例：41.7515">
+    </div>
+    <div class="form-row">
+        <label for="manualLng">経度：</label><br>
+        <input type="number" id="manualLng" step="any" placeholder="例：140.7140">
+    </div>
+    <div class="form-row">
+        <label for="manualAddress">所在地：</label><br>
+        <input type="text" id="manualAddress" placeholder="例：北海道函館市">
+    </div>
+    <div class="form-row">
+        <label for="manualDescription">説明：</label><br>
+        <textarea id="manualDescription" rows="3" placeholder="施設の説明を入力"></textarea>
+    </div>
+    <button onclick="addManualShrine()">神社・寺院を登録</button>
+
+    <hr>
+
+    <!-- 登録件数とデータ出力 -->
+    <h2>登録済み施設</h2>
+    <p id="registeredCount">登録件数：0件</p>
+    <button onclick="exportShrines()">登録データをJSONで保存</button>
+    <p class="note">手動登録したデータは、このブラウザのlocalStorageに保存されます。自動取得したデータはページを再読み込みすると消えるため、必要に応じてJSONで保存してください。</p>
+
+
+    <!-- JavaScriptライブラリ -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
 
     <script>
-
         // =====================================
         // ① 地図の初期化
         // =====================================
+        const map = L.map('map').setView([41.7688, 140.7290], 13);
 
-        const map = L.map('map').setView(
-            [41.7688, 140.7290],
-            13
-        );
-
-        // OpenStreetMapの地図を表示
-        L.tileLayer(
-            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-            {
-                maxZoom: 19,
-                attribution: '&copy; OpenStreetMap contributors'
-            }
-        ).addTo(map);
-
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
 
         // =====================================
-        // ② 神社データ
+        // ② 神社・寺院の初期データ
         // =====================================
-
         const shrines = [
-
             {
-                name: "函館八幡宮",
+                id: 'initial-hakodate-hachimangu',
+                name: '函館八幡宮',
+                type: '神社',
                 latitude: 41.7515,
                 longitude: 140.7140,
-                address: "北海道函館市谷地頭町",
-                description: "函館市内の神社"
+                address: '北海道函館市谷地頭町',
+                description: '函館市内の神社',
+                source: '初期データ'
             },
-
             {
-                name: "湯倉神社",
+                id: 'initial-yukura-jinja',
+                name: '湯倉神社',
+                type: '神社',
                 latitude: 41.7805,
                 longitude: 140.7830,
-                address: "北海道函館市湯川町",
-                description: "湯の川地区の神社"
+                address: '北海道函館市湯川町',
+                description: '湯の川地区の神社',
+                source: '初期データ'
             }
-
         ];
 
+        // 手動登録データを読み込む。保存データが壊れていても初期表示を続ける。
+        let savedShrines = [];
+        try {
+            savedShrines = JSON.parse(localStorage.getItem('manualShrines') || '[]');
+            if (!Array.isArray(savedShrines)) savedShrines = [];
+        } catch (error) {
+            console.error('保存データの読み込みに失敗しました。', error);
+            savedShrines = [];
+        }
 
-        // =====================================
-        // ③ 神社のマーカーを表示
-        // =====================================
-
-        shrines.forEach(function(shrine) {
-
-            const marker = L.marker([
-                shrine.latitude,
-                shrine.longitude
-            ]).addTo(map);
-
-            marker.bindPopup(
-                "<h3>" + shrine.name + "</h3>" +
-                "<p>所在地：" + shrine.address + "</p>" +
-                "<p>" + shrine.description + "</p>"
-            );
-
+        savedShrines.forEach(function(shrine) {
+            if (shrine && shrine.id && !shrines.some(function(item) {
+                return item.id === shrine.id;
+            })) {
+                shrines.push(shrine);
+            }
         });
 
+        // 登録済みIDとマーカーを管理する
+        const registeredIds = new Set();
+        const shrineMarkers = new Map();
+        const destinationSelect = document.getElementById('destinationSelect');
 
         // =====================================
-        // ④ 現在地追跡機能
+        // ③ 施設のマーカーと目的地選択肢を表示
         // =====================================
+        function displayShrine(shrine) {
+            if (!shrine.id) {
+                shrine.id = 'facility-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+            }
+            if (shrineMarkers.has(shrine.id)) return;
 
-        // 現在地マーカー
+            const marker = L.marker([shrine.latitude, shrine.longitude]).addTo(map);
+
+            // textContentを使用して、名称などをHTMLとして解釈させない
+            const popup = document.createElement('div');
+            const title = document.createElement('h3');
+            title.textContent = shrine.name || '名称未登録';
+            const type = document.createElement('p');
+            type.textContent = '種類：' + (shrine.type || '未登録');
+            const address = document.createElement('p');
+            address.textContent = '所在地：' + (shrine.address || '未登録');
+            const description = document.createElement('p');
+            description.textContent = shrine.description || '説明なし';
+            const source = document.createElement('p');
+            source.textContent = '情報元：' + (shrine.source || '未登録');
+
+            popup.appendChild(title);
+            popup.appendChild(type);
+            popup.appendChild(address);
+            popup.appendChild(description);
+            popup.appendChild(source);
+            marker.bindPopup(popup);
+
+            shrineMarkers.set(shrine.id, marker);
+            registeredIds.add(shrine.id);
+
+            const option = document.createElement('option');
+            option.value = String(shrines.indexOf(shrine));
+            option.textContent = shrine.name || '名称未登録';
+            destinationSelect.appendChild(option);
+
+            updateRegisteredCount();
+        }
+
+        shrines.forEach(function(shrine) {
+            displayShrine(shrine);
+        });
+
+        // =====================================
+        // ④ 現在地追跡に使用する変数
+        // =====================================
         let currentMarker = null;
-
-        // 追跡ID
         let watchId = null;
+        let currentPosition = null;
+        let routingControl = null;
 
-
-        // 追跡開始
+        // =====================================
+        // ⑤ 現在地追跡開始
+        // =====================================
         function startTracking() {
-
             if (!navigator.geolocation) {
-                alert("このブラウザでは位置情報を利用できません。");
+                alert('このブラウザでは位置情報を利用できません。');
                 return;
             }
-
-            // 二重起動防止
             if (watchId !== null) {
-                alert("すでに追跡中です。");
+                alert('すでに追跡中です。');
                 return;
             }
 
             watchId = navigator.geolocation.watchPosition(
-
                 function(position) {
-
-                    // 緯度と経度を取得
                     const latitude = position.coords.latitude;
                     const longitude = position.coords.longitude;
+                    currentPosition = L.latLng(latitude, longitude);
 
-                    const currentPosition = [
-                        latitude,
-                        longitude
-                    ];
-
-                    // 地図を現在地に移動
                     map.setView(currentPosition, 16);
-
-                    // マーカーを作成または更新
                     if (currentMarker === null) {
-
                         currentMarker = L.marker(currentPosition)
                             .addTo(map)
-                            .bindPopup("現在地");
-
+                            .bindPopup('現在地');
                         currentMarker.openPopup();
-
                     } else {
-
                         currentMarker.setLatLng(currentPosition);
-
                     }
 
-                    console.log("緯度：" + latitude);
-                    console.log("経度：" + longitude);
-
+                    console.log('緯度：' + latitude);
+                    console.log('経度：' + longitude);
                 },
-
                 function(error) {
-
-                    switch(error.code) {
-
+                    switch (error.code) {
                         case 1:
-                            alert("位置情報の利用が許可されていません。");
+                            alert('位置情報の利用が許可されていません。');
                             break;
-
                         case 2:
-                            alert("現在地を取得できませんでした。");
+                            alert('現在地を取得できませんでした。');
                             break;
-
                         case 3:
-                            alert("位置情報の取得がタイムアウトしました。");
+                            alert('位置情報の取得がタイムアウトしました。');
                             break;
-
                         default:
-                            alert("位置情報の取得中にエラーが発生しました。");
+                            alert('位置情報の取得中にエラーが発生しました。');
                     }
-
-                    // 取得エラー時は追跡状態を解除
                     if (watchId !== null) {
                         navigator.geolocation.clearWatch(watchId);
                         watchId = null;
                     }
-
                 },
-
                 {
                     enableHighAccuracy: true,
                     maximumAge: 3000,
                     timeout: 10000
                 }
-
             );
-
         }
 
-
         // =====================================
-        // ⑤ 追跡停止機能
+        // ⑥ 現在地追跡停止
         // =====================================
-
         function stopTracking() {
-
             if (watchId !== null) {
-
                 navigator.geolocation.clearWatch(watchId);
-
                 watchId = null;
-
-                alert("現在地の追跡を停止しました。");
-
+                alert('現在地の追跡を停止しました。');
             } else {
+                alert('現在地は追跡されていません。');
+            }
+        }
 
-                alert("現在地は追跡されていません。");
+        // =====================================
+        // ⑦ Overpass APIによる自動取得
+        // =====================================
+        async function loadNearbyShrines() {
+            const status = document.getElementById('loadStatus');
+            status.textContent = '神社・寺院を検索しています...';
 
+            const bounds = map.getBounds();
+            const south = bounds.getSouth();
+            const west = bounds.getWest();
+            const north = bounds.getNorth();
+            const east = bounds.getEast();
+
+            // 表示中の地図範囲から、神道・仏教の礼拝施設を検索
+            const query = `
+                [out:json][timeout:25];
+                (
+                    nwr["amenity"="place_of_worship"]["religion"~"shinto"](${south},${west},${north},${east});
+                    nwr["amenity"="place_of_worship"]["religion"~"buddhist"](${south},${west},${north},${east});
+                );
+                out center tags;
+            `;
+
+            try {
+                const response = await fetch('https://overpass-api.de/api/interpreter', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
+                    },
+                    body: new URLSearchParams({ data: query })
+                });
+
+                if (!response.ok) {
+                    throw new Error('API通信エラー：' + response.status);
+                }
+
+                const data = await response.json();
+                let addedCount = 0;
+
+                data.elements.forEach(function(element) {
+                    const tags = element.tags || {};
+                    const latitude = element.lat ?? (element.center && element.center.lat);
+                    const longitude = element.lon ?? (element.center && element.center.lon);
+                    if (latitude === undefined || longitude === undefined) return;
+
+                    const name = tags['name:ja'] || tags.name || tags['name:en'] || '名称未登録の施設';
+                    const type = String(tags.religion || '').includes('shinto') ? '神社' : '寺院';
+                    const address = tags['addr:full'] || [
+                        tags['addr:province'], tags['addr:city'], tags['addr:town'],
+                        tags['addr:suburb'], tags['addr:street'], tags['addr:housenumber']
+                    ].filter(Boolean).join('');
+                    const id = 'osm-' + element.type + '-' + element.id;
+
+                    if (registeredIds.has(id)) return;
+
+                    const shrine = {
+                        id: id,
+                        name: name,
+                        type: type,
+                        latitude: Number(latitude),
+                        longitude: Number(longitude),
+                        address: address || '住所未登録',
+                        description: tags.description || '説明未登録',
+                        source: 'OpenStreetMap'
+                    };
+
+                    shrines.push(shrine);
+                    displayShrine(shrine);
+                    addedCount++;
+                });
+
+                status.textContent = '検索完了：新しく ' + addedCount + ' 件の施設を取得しました。';
+            } catch (error) {
+                console.error(error);
+                status.textContent = '取得に失敗しました。時間をおいて再度お試しください。';
+            }
+        }
+
+        // =====================================
+        // ⑧ 手動登録機能
+        // =====================================
+        function addManualShrine() {
+            const name = document.getElementById('manualName').value.trim();
+            const type = document.getElementById('manualType').value;
+            const latitudeText = document.getElementById('manualLat').value.trim();
+            const longitudeText = document.getElementById('manualLng').value.trim();
+            const latitude = Number(latitudeText);
+            const longitude = Number(longitudeText);
+            const address = document.getElementById('manualAddress').value.trim();
+            const description = document.getElementById('manualDescription').value.trim();
+
+            if (!name) {
+                alert('施設名を入力してください。');
+                return;
+            }
+            if (
+                latitudeText === '' || longitudeText === '' ||
+                !Number.isFinite(latitude) || !Number.isFinite(longitude) ||
+                latitude < -90 || latitude > 90 ||
+                longitude < -180 || longitude > 180
+            ) {
+                alert('正しい緯度・経度を入力してください。');
+                return;
             }
 
+            const shrine = {
+                id: 'manual-' + Date.now(),
+                name: name,
+                type: type,
+                latitude: latitude,
+                longitude: longitude,
+                address: address || '住所未登録',
+                description: description || '説明未登録',
+                source: '手動登録'
+            };
+
+            shrines.push(shrine);
+            displayShrine(shrine);
+            saveManualShrines();
+
+            document.getElementById('manualName').value = '';
+            document.getElementById('manualLat').value = '';
+            document.getElementById('manualLng').value = '';
+            document.getElementById('manualAddress').value = '';
+            document.getElementById('manualDescription').value = '';
+
+            map.setView([latitude, longitude], 16);
+            alert('神社・寺院を登録しました。');
         }
 
-    </script>
+        // =====================================
+        // ⑨ 手動登録データの保存
+        // =====================================
+        function saveManualShrines() {
+            const manualData = shrines.filter(function(shrine) {
+                return shrine.source === '手動登録';
+            });
+            try {
+                localStorage.setItem('manualShrines', JSON.stringify(manualData));
+            } catch (error) {
+                console.error(error);
+                alert('ブラウザにデータを保存できませんでした。JSON保存機能を利用してください。');
+            }
+        }
 
+        // =====================================
+        // ⑩ 登録件数の更新
+        // =====================================
+        function updateRegisteredCount() {
+            document.getElementById('registeredCount').textContent =
+                '登録件数：' + shrines.length + '件';
+        }
+
+        // =====================================
+        // ⑪ 登録データをJSONファイルとして出力
+        // =====================================
+        function exportShrines() {
+            const json = JSON.stringify(shrines, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'shrines.json';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        }
+
+        // =====================================
+        // ⑫ 経路検索機能
+        // =====================================
+        function searchRoute() {
+            if (currentPosition === null) {
+                alert('先に追跡開始を押して現在地を取得してください。');
+                return;
+            }
+
+            const selectedIndex = destinationSelect.value;
+            if (selectedIndex === '') {
+                alert('目的地を選択してください。');
+                return;
+            }
+
+            const destination = shrines[Number(selectedIndex)];
+            if (!destination) {
+                alert('選択した目的地の情報が見つかりません。');
+                return;
+            }
+
+            const destinationPosition = L.latLng(
+                destination.latitude,
+                destination.longitude
+            );
+
+            if (routingControl !== null) {
+                map.removeControl(routingControl);
+                routingControl = null;
+            }
+
+            routingControl = L.Routing.control({
+                waypoints: [currentPosition, destinationPosition],
+                router: L.Routing.osrmv1({
+                    serviceUrl: 'https://router.project-osrm.org/route/v1'
+                }),
+                addWaypoints: false,
+                draggableWaypoints: false,
+                showAlternatives: false,
+                fitSelectedRoutes: true
+            }).addTo(map);
+
+            routingControl.on('routesfound', function(event) {
+                const route = event.routes[0];
+                const distance = (route.summary.totalDistance / 1000).toFixed(2);
+                const time = Math.round(route.summary.totalTime / 60);
+                document.getElementById('routeInfo').textContent =
+                    '目的地：' + destination.name +
+                    ' / 距離：約' + distance + ' km' +
+                    ' / 所要時間：約' + time + ' 分';
+            });
+
+            routingControl.on('routingerror', function() {
+                document.getElementById('routeInfo').textContent =
+                    '経路を検索できませんでした。通信状態や目的地を確認してください。';
+            });
+        }
+
+        // =====================================
+        // ⑬ 経路消去機能
+        // =====================================
+        function clearRoute() {
+            if (routingControl !== null) {
+                map.removeControl(routingControl);
+                routingControl = null;
+            }
+            document.getElementById('routeInfo').textContent = '経路を消去しました。';
+        }
+
+        // 初期データ・保存データを含む登録件数を表示
+        updateRegisteredCount();
+    </script>
 </body>
 </html>
