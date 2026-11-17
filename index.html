@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>神社・寺院マップ</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -51,6 +52,19 @@
 <body>
     <h1>神社・寺院マップ</h1>
     <p>マーカーをクリックすると、神社・寺院の情報を表示します。</p>
+
+    <!-- 管理者ログイン：閲覧はログイン不要、登録・保存は管理者ログインが必要 -->
+    <section id="adminPanel" style="padding:12px;background:#f3f6fa;border-radius:8px;max-width:650px;">
+        <strong>管理者ログイン</strong>
+        <p id="authStatus">ログイン状態を確認しています...</p>
+        <div id="loginForm">
+            <input type="email" id="adminEmail" placeholder="管理者メールアドレス" autocomplete="username">
+            <input type="password" id="adminPassword" placeholder="パスワード" autocomplete="current-password">
+            <button onclick="adminLogin()">ログイン</button>
+        </div>
+        <button id="logoutButton" onclick="adminLogout()" style="display:none;">ログアウト</button>
+        <p class="note">神社情報の閲覧は誰でも可能です。施設の登録・自動取得データの保存には管理者ログインが必要です。</p>
+    </section>
 
     <!-- 現在地追跡 -->
     <h2>現在地の追跡</h2>
@@ -122,7 +136,7 @@
     <h2>登録済み施設</h2>
     <p id="registeredCount">登録件数：0件</p>
     <button onclick="exportShrines()">登録データをJSONで保存</button>
-    <p class="note">手動登録したデータは、このブラウザのlocalStorageに保存されます。自動取得したデータはページを再読み込みすると消えるため、必要に応じてJSONで保存してください。</p>
+    <p class="note">自動取得・手動登録した施設情報はSupabaseに保存されます。JSON保存はバックアップ用にも利用できます。</p>
 
 
     <!-- JavaScriptライブラリ -->
@@ -131,7 +145,19 @@
 
     <script>
         // =====================================
-        // ① 地図の初期化
+        // ① Supabase接続設定
+        // =====================================
+        // 下の2項目を自分のSupabaseプロジェクトの値に置き換えてください。
+        const SUPABASE_URL = "https://jtzsqpfjpltugdkffdnf.supabase.co";
+        const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_BRVsCDc-Q0pJtCY4TTlxJw_YapiV8sk";
+        const supabaseClient = window.supabase.createClient(
+            SUPABASE_URL,
+            SUPABASE_PUBLISHABLE_KEY
+        );
+        let currentSession = null;
+
+        // =====================================
+        // ② 地図の初期化
         // =====================================
         const map = L.map('map').setView([41.7688, 140.7290], 13);
 
@@ -141,7 +167,7 @@
         }).addTo(map);
 
         // =====================================
-        // ② 神社・寺院の初期データ
+        // ③ 神社・寺院の初期データ
         // =====================================
         const shrines = [
             {
@@ -166,23 +192,7 @@
             }
         ];
 
-        // 手動登録データを読み込む。保存データが壊れていても初期表示を続ける。
-        let savedShrines = [];
-        try {
-            savedShrines = JSON.parse(localStorage.getItem('manualShrines') || '[]');
-            if (!Array.isArray(savedShrines)) savedShrines = [];
-        } catch (error) {
-            console.error('保存データの読み込みに失敗しました。', error);
-            savedShrines = [];
-        }
-
-        savedShrines.forEach(function(shrine) {
-            if (shrine && shrine.id && !shrines.some(function(item) {
-                return item.id === shrine.id;
-            })) {
-                shrines.push(shrine);
-            }
-        });
+        // 施設情報の永続保存先はFlask経由のSQLiteデータベースとする。
 
         // 登録済みIDとマーカーを管理する
         const registeredIds = new Set();
@@ -190,7 +200,7 @@
         const destinationSelect = document.getElementById('destinationSelect');
 
         // =====================================
-        // ③ 施設のマーカーと目的地選択肢を表示
+        // ④ 施設のマーカーと目的地選択肢を表示
         // =====================================
         function displayShrine(shrine) {
             if (!shrine.id) {
@@ -236,7 +246,7 @@
         });
 
         // =====================================
-        // ④ 現在地追跡に使用する変数
+        // ⑤ 現在地追跡に使用する変数
         // =====================================
         let currentMarker = null;
         let watchId = null;
@@ -244,7 +254,7 @@
         let routingControl = null;
 
         // =====================================
-        // ⑤ 現在地追跡開始
+        // ⑥ 現在地追跡開始
         // =====================================
         function startTracking() {
             if (!navigator.geolocation) {
@@ -316,7 +326,7 @@
         }
 
         // =====================================
-        // ⑦ Overpass APIによる自動取得
+        // ⑧ Overpass APIによる自動取得
         // =====================================
         async function loadNearbyShrines() {
             const status = document.getElementById('loadStatus');
@@ -352,7 +362,7 @@
                 }
 
                 const data = await response.json();
-                let addedCount = 0;
+                const candidates = [];
 
                 data.elements.forEach(function(element) {
                     const tags = element.tags || {};
@@ -368,9 +378,7 @@
                     ].filter(Boolean).join('');
                     const id = 'osm-' + element.type + '-' + element.id;
 
-                    if (registeredIds.has(id)) return;
-
-                    const shrine = {
+                    candidates.push({
                         id: id,
                         name: name,
                         type: type,
@@ -379,13 +387,18 @@
                         address: address || '住所未登録',
                         description: tags.description || '説明未登録',
                         source: 'OpenStreetMap'
-                    };
+                    });
+                });
 
+                // 取得した情報を先にSupabaseへ保存する。保存に失敗した場合は地図へ追加しない。
+                const saved = await saveShrinesToDatabase(candidates);
+                let addedCount = 0;
+                saved.forEach(function(shrine) {
+                    if (registeredIds.has(shrine.id)) return;
                     shrines.push(shrine);
                     displayShrine(shrine);
                     addedCount++;
                 });
-
                 status.textContent = '検索完了：新しく ' + addedCount + ' 件の施設を取得しました。';
             } catch (error) {
                 console.error(error);
@@ -394,9 +407,9 @@
         }
 
         // =====================================
-        // ⑧ 手動登録機能
+        // ⑨ 手動登録機能
         // =====================================
-        function addManualShrine() {
+        async function addManualShrine() {
             const name = document.getElementById('manualName').value.trim();
             const type = document.getElementById('manualType').value;
             const latitudeText = document.getElementById('manualLat').value.trim();
@@ -421,7 +434,7 @@
             }
 
             const shrine = {
-                id: 'manual-' + Date.now(),
+                id: 'manual-' + (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2)),
                 name: name,
                 type: type,
                 latitude: latitude,
@@ -431,9 +444,16 @@
                 source: '手動登録'
             };
 
+            try {
+                await saveShrinesToDatabase([shrine]);
+            } catch (error) {
+                console.error(error);
+                alert(error.message || '保存できませんでした。管理者としてログインしているか、Supabaseの権限設定を確認してください。');
+                return;
+            }
+
             shrines.push(shrine);
             displayShrine(shrine);
-            saveManualShrines();
 
             document.getElementById('manualName').value = '';
             document.getElementById('manualLat').value = '';
@@ -446,18 +466,125 @@
         }
 
         // =====================================
-        // ⑨ 手動登録データの保存
+        // ⑩ Supabaseデータベースとの通信
         // =====================================
-        function saveManualShrines() {
-            const manualData = shrines.filter(function(shrine) {
-                return shrine.source === '手動登録';
+        function toAppShrine(row) {
+            return {
+                id: row.source_key,
+                name: row.name,
+                type: row.type,
+                latitude: Number(row.latitude),
+                longitude: Number(row.longitude),
+                address: row.address || '',
+                description: row.description || '',
+                source: row.source || ''
+            };
+        }
+
+        async function saveShrinesToDatabase(records) {
+            if (!records.length) return [];
+            if (!currentSession) {
+                throw new Error('保存するには管理者ログインが必要です。');
+            }
+
+            const rows = records.map(function(shrine) {
+                return {
+                    source_key: shrine.id,
+                    name: shrine.name,
+                    type: shrine.type || '未分類',
+                    latitude: Number(shrine.latitude),
+                    longitude: Number(shrine.longitude),
+                    address: shrine.address || '',
+                    description: shrine.description || '',
+                    source: shrine.source || '不明'
+                };
             });
+
+            const { data, error } = await supabaseClient
+                .from('shrines')
+                .upsert(rows, { onConflict: 'source_key' })
+                .select();
+
+            if (error) throw error;
+            return (data || []).map(toAppShrine);
+        }
+
+        async function loadDatabaseShrines() {
+            const status = document.getElementById('loadStatus');
             try {
-                localStorage.setItem('manualShrines', JSON.stringify(manualData));
+                const { data, error } = await supabaseClient
+                    .from('shrines')
+                    .select('*')
+                    .order('name', { ascending: true });
+                if (error) throw error;
+
+                let loadedCount = 0;
+                (data || []).forEach(function(row) {
+                    const shrine = toAppShrine(row);
+                    if (registeredIds.has(shrine.id)) return;
+                    shrines.push(shrine);
+                    displayShrine(shrine);
+                    loadedCount++;
+                });
+                status.textContent = 'Supabaseから ' + loadedCount + ' 件の施設を読み込みました。';
             } catch (error) {
                 console.error(error);
-                alert('ブラウザにデータを保存できませんでした。JSON保存機能を利用してください。');
+                status.textContent = 'Supabaseから読み込めませんでした。Project URL・Publishable key・RLS設定を確認してください。';
             }
+        }
+
+        // =====================================
+        // ⑪ 管理者ログイン・ログアウト
+        // =====================================
+        function updateAuthUI(session) {
+            currentSession = session;
+            const status = document.getElementById('authStatus');
+            const loginForm = document.getElementById('loginForm');
+            const logoutButton = document.getElementById('logoutButton');
+            if (session && session.user) {
+                status.textContent = 'ログイン中：' + session.user.email;
+                loginForm.style.display = 'none';
+                logoutButton.style.display = 'inline-block';
+            } else {
+                status.textContent = '未ログイン（神社情報の閲覧のみ可能）';
+                loginForm.style.display = 'block';
+                logoutButton.style.display = 'none';
+            }
+        }
+
+        async function adminLogin() {
+            const email = document.getElementById('adminEmail').value.trim();
+            const password = document.getElementById('adminPassword').value;
+            if (!email || !password) {
+                alert('メールアドレスとパスワードを入力してください。');
+                return;
+            }
+            const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+            if (error) {
+                alert('ログインに失敗しました：' + error.message);
+                return;
+            }
+            updateAuthUI(data.session);
+            alert('管理者としてログインしました。');
+        }
+
+        async function adminLogout() {
+            const { error } = await supabaseClient.auth.signOut();
+            if (error) {
+                alert('ログアウトに失敗しました：' + error.message);
+                return;
+            }
+            updateAuthUI(null);
+            alert('ログアウトしました。');
+        }
+
+        async function initializeAuth() {
+            const { data, error } = await supabaseClient.auth.getSession();
+            if (error) console.error(error);
+            updateAuthUI(data ? data.session : null);
+            supabaseClient.auth.onAuthStateChange(function(_event, session) {
+                updateAuthUI(session);
+            });
         }
 
         // =====================================
@@ -553,8 +680,10 @@
             document.getElementById('routeInfo').textContent = '経路を消去しました。';
         }
 
-        // 初期データ・保存データを含む登録件数を表示
+        // 初期データを表示した後、Supabaseに保存済みの施設を読み込む
         updateRegisteredCount();
+        initializeAuth();
+        loadDatabaseShrines();
     </script>
 </body>
 </html>
