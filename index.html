@@ -63,7 +63,7 @@
             <button onclick="adminLogin()">ログイン</button>
         </div>
         <button id="logoutButton" onclick="adminLogout()" style="display:none;">ログアウト</button>
-        <p class="note">神社情報の閲覧は誰でも可能です。施設の登録・自動取得データの保存には管理者ログインが必要です。</p>
+        <p class="note">神社情報の閲覧と地図範囲からの自動取得は誰でも可能です。手動登録および自動取得データのSupabaseへの保存・更新には管理者ログインが必要です。</p>
     </section>
 
     <!-- 現在地追跡 -->
@@ -390,16 +390,25 @@
                     });
                 });
 
-                // 取得した情報を先にSupabaseへ保存する。保存に失敗した場合は地図へ追加しない。
-                const saved = await saveShrinesToDatabase(candidates);
+                // 自動取得とSupabaseへの保存を分離する。
+                // 未ログインの場合も、取得した施設をこの画面の地図に表示する。
+                // 管理者ログイン中の場合だけSupabaseへ保存・更新する。
+                let facilitiesToDisplay = candidates;
+                let saveMessage = '（未ログインのため、今回取得した情報はこの画面にのみ表示しています。データベースには保存されません）';
+
+                if (currentSession) {
+                    facilitiesToDisplay = await saveShrinesToDatabase(candidates);
+                    saveMessage = '（管理者としてSupabaseに保存しました）';
+                }
+
                 let addedCount = 0;
-                saved.forEach(function(shrine) {
+                facilitiesToDisplay.forEach(function(shrine) {
                     if (registeredIds.has(shrine.id)) return;
                     shrines.push(shrine);
                     displayShrine(shrine);
                     addedCount++;
                 });
-                status.textContent = '検索完了：新しく ' + addedCount + ' 件の施設を取得しました。';
+                status.textContent = '検索完了：新しく ' + addedCount + ' 件の施設を表示しました。' + saveMessage;
             } catch (error) {
                 console.error(error);
                 status.textContent = '取得に失敗しました。時間をおいて再度お試しください。';
@@ -680,7 +689,7 @@
             document.getElementById('routeInfo').textContent = '経路を消去しました。';
         }
 
-        // 初期データを表示した後、Supabaseに保存済みの施設を読み込む
+        // 初期データを表示した後、公開閲覧可能なSupabaseの施設情報を読み込む
         updateRegisteredCount();
         initializeAuth();
         loadDatabaseShrines();
