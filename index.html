@@ -391,29 +391,35 @@
                 });
 
                 // 自動取得とSupabaseへの保存を分離する。
-                // 未ログインの場合も、取得した施設をこの画面の地図に表示する。
-                // 管理者ログイン中の場合だけSupabaseへ保存・更新する。
+                // 未ログインでも取得した施設を地図に表示する。
                 let facilitiesToDisplay = candidates;
-                let saveMessage = '（未ログインのため、今回取得した情報はこの画面にのみ表示しています。データベースには保存されません）';
+                let saveMessage = '（未ログインのため、データベースには保存されません）';
 
+                // 管理者ログイン中の場合だけSupabaseに保存する。
                 if (currentSession) {
                     facilitiesToDisplay = await saveShrinesToDatabase(candidates);
                     saveMessage = '（管理者としてSupabaseに保存しました）';
-                }
+                    }
 
+                // 取得した施設を地図に表示する。
                 let addedCount = 0;
+
                 facilitiesToDisplay.forEach(function(shrine) {
                     if (registeredIds.has(shrine.id)) return;
+
                     shrines.push(shrine);
                     displayShrine(shrine);
                     addedCount++;
                 });
-                status.textContent = '検索完了：新しく ' + addedCount + ' 件の施設を表示しました。' + saveMessage;
-            } catch (error) {
-                console.error(error);
-                status.textContent = '取得に失敗しました。時間をおいて再度お試しください。';
-            }
-        }
+
+                status.textContent =
+                '検索完了：新しく ' + addedCount +
+                ' 件の施設を表示しました。' + saveMessage;
+                } catch (error) {
+                    console.error(error);
+                    status.textContent = '取得に失敗しました。時間をおいて再度お試しください。';
+                    }
+                }
 
         // =====================================
         // ⑨ 手動登録機能
